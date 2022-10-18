@@ -79,7 +79,7 @@ def main():
     # Fit Model
     model = pipeline.fit(train_df)
     
-    # Make Prediction (not on the training date ideally)
+    # Make Prediction (not on the training data ideally)
     predictions = model.transform(train_df)
 
     # Displaying some stuff
