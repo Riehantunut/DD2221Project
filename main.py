@@ -11,6 +11,10 @@ from pyspark.ml.regression import RandomForestRegressor
 
 import matplotlib.pyplot as plt
 import os
+from pyspark.sql.functions import dayofweek
+
+
+
 
 def add_lag(df, n, col):
     # Appends n columns with the sale data shifted by n down
@@ -28,11 +32,37 @@ def add_day_month(df):
            .withColumn("DayOfWeek", F.dayofweek(df.date))
     return df
 
+
+def merge_oil_price_to_train(training_frame, oil_frame):
+    # Add column with oil price to training dataframe. Oil price of the weekend is the Friday's price
+
+    output = training_frame.join(oil_frame,['date'],how='left')
+    output = output.withColumn('day_of_week', ((dayofweek('date')+5)%7)+1) # Monday=1
+
+    df1 = output.withColumn( # set weekend oil prices to the Friday price
+        "row_id",
+        F.monotonically_increasing_id()
+    ).withColumn(
+        "group",
+        F.sum(F.when(F.col("day_of_week") == "5", 1)).over(Window.orderBy("row_id"))
+    ).withColumn(
+        "dcoilwtico",
+        F.when(
+            F.col("dcoilwtico").isNull(),
+            F.first("dcoilwtico", ignorenulls=True).over(Window.partitionBy("group").orderBy("row_id"))
+        ).otherwise(F.col("dcoilwtico"))
+    ).drop("row_id", "group")
+
+    df1 = df1.drop("day_of_week")
+    return df1
+
+
+
 def main():
     # Parameters
     days_lagged = 7
     columns_lagged = ['sales']
-    columns_to_features = ['Year','Month','DayOfWeek','family_encoded','store_nbr','onpromotion']
+    columns_to_features = ['Year','Month','DayOfWeek','family_encoded','store_nbr','onpromotion', 'dcoilwtico']
     column_label = 'sales'
 
     # Get path to directory (we all have unique paths to the repo)
@@ -62,6 +92,13 @@ def main():
     # Add day of the week, month and year to the dataframe
     train_df = add_day_month(train_df)
     
+    #print((train_df.count(), len(train_df.columns)))  # get .shape of the RDD
+
+    train_df = merge_oil_price_to_train(train_df, oil_df)
+    train_df.show()
+    train_df = train_df.filter(train_df.dcoilwtico. isNotNull()) # filter away row with null value
+
+
     # Create Pipeline
     # Index product family -> One Hot Encode Index -> Assemble Vector -> RF regressor
     stringInd = StringIndexer(inputCol='family', outputCol='family_index')
@@ -107,6 +144,7 @@ def main():
     ax.set_title('Sales per id')
 
     plt.show()
+
 
 if(__name__=='__main__'):
     main()
